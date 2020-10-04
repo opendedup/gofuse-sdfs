@@ -1,0 +1,18 @@
+steps:
+- name: gcr.io/kaniko-project/executor:latest
+  args:
+    - --destination=gcr.io/$PROJECT_ID/hybrics-mount:$BRANCH_NAME
+    - --cache=true
+    - --cache-ttl=10h
+    - --dockerfile=Dockerfile
+- name: gcr.io/cloud-builders/docker
+  entrypoint: 'bash'
+  args: [ '-c', 'docker run -v /workspace:/opt/mount --rm --entrypoint cp gcr.io/$PROJECT_ID/hybrics-mount:$BRANCH_NAME /go/gofuse-sdfs/mount.sdfs /opt/mount/mount.sdfs']
+- name: gcr.io/cloud-builders/gcloud
+  entrypoint: 'bash'
+  args: [ '-c', "gsutil cp /workspace/mount.sdfs gs://${_DIST_BUCKET}/sdfscli/mount.sdfs-$BRANCH_NAME" ]
+substitutions:
+  _DIST_BUCKET: abucket # default value
+timeout: 10800s
+options:
+  machineType: 'N1_HIGHCPU_8'

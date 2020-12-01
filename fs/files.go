@@ -6,7 +6,6 @@ package fs
 
 import (
 	"context"
-	"log"
 	"sync"
 	"time"
 	"unsafe"
@@ -17,6 +16,7 @@ import (
 
 	ffs "github.com/hanwen/go-fuse/v2/fs"
 	"github.com/hanwen/go-fuse/v2/fuse"
+	log "github.com/sirupsen/logrus"
 )
 
 // NewsdfsFile creates a FileHandle out of a file descriptor. All
@@ -63,7 +63,7 @@ func (f *sdfsFile) Read(ctx context.Context, buf []byte, off int64) (res fuse.Re
 	rs, err := con.Read(ctx, f.fd, off, int32(len(buf)))
 	copy(buf, rs)
 	if err != nil {
-		log.Printf("error %v \n", err)
+		log.Debugf("read error %v \n", err)
 		return nil, ToErrno(err)
 	}
 	r := fuse.ReadResultData(rs)
@@ -71,27 +71,31 @@ func (f *sdfsFile) Read(ctx context.Context, buf []byte, off int64) (res fuse.Re
 }
 
 func (f *sdfsFile) Write(ctx context.Context, data []byte, off int64) (uint32, syscall.Errno) {
-
 	err := con.Write(ctx, f.fd, data, off, int32(len(data)))
 	if err != nil {
+		log.Debugf("write error %v \n", err)
 		return 0, ToErrno(err)
 	}
 	return uint32(len(data)), ffs.OK
 }
 
 func (f *sdfsFile) Release(ctx context.Context) syscall.Errno {
-
 	if f.fd != -1 {
 		err := con.Release(ctx, f.fd)
 		f.fd = -1
+		if err != nil {
+			log.Debugf("error during close %v", err)
+		}
 		return ToErrno(err)
 	}
 	return syscall.EBADF
 }
 
 func (f *sdfsFile) Flush(ctx context.Context) syscall.Errno {
-
 	err := con.Flush(ctx, f.path, f.fd)
+	if err != nil {
+		log.Debugf("error during flush %v", err)
+	}
 	return ToErrno(err)
 }
 
@@ -105,6 +109,9 @@ func (f *sdfsFile) Fsync(ctx context.Context, flags uint32) (errno syscall.Errno
 func (f *sdfsFile) Setattr(ctx context.Context, in *fuse.SetAttrIn, out *fuse.AttrOut) syscall.Errno {
 	if m, ok := in.GetMode(); ok {
 		if err := con.Chmod(ctx, f.path, int32(m)); err != nil {
+			if err != nil {
+				log.Debugf("error during setattr %v", err)
+			}
 			return ToErrno(err)
 		}
 	}
@@ -142,20 +149,24 @@ func (f *sdfsFile) Setattr(ctx context.Context, in *fuse.SetAttrIn, out *fuse.At
 		mt := fuse.UtimeToTimespec(mp).Sec
 
 		if err := con.Utime(ctx, f.path, at, mt); err != nil {
+			log.Debugf("error setting utime for %s %v", f.path, err)
 			return ffs.ToErrno(err)
 		}
 	}
 
 	if sz, ok := in.GetSize(); ok {
 		if err := con.Truncate(ctx, f.path, int64(sz)); err != nil {
+			log.Debugf("error truncate for %s %v", f.path, err)
 			return ffs.ToErrno(err)
 		}
 	}
 
 	fi, err := con.GetAttr(ctx, f.path)
 	if err != nil {
+		log.Debugf("error getattr for %s %v", f.path, err)
 		return ToErrno(err)
 	}
+
 	atim := time.Unix(0, fi.Atime*int64(time.Millisecond))
 	ctim := time.Unix(0, fi.Ctim*int64(time.Millisecond))
 	mtim := time.Unix(0, fi.Mtim*int64(time.Millisecond))
@@ -173,6 +184,9 @@ func (f *sdfsFile) Setattr(ctx context.Context, in *fuse.SetAttrIn, out *fuse.At
 func (f *sdfsFile) Getattr(ctx context.Context, a *fuse.AttrOut) syscall.Errno {
 	fi, err := con.GetAttr(ctx, f.path)
 	if err != nil {
+		if err != nil {
+			log.Debugf("error during getattr %v", err)
+		}
 		return ToErrno(err)
 	}
 	atime := time.Unix(0, fi.Atime*int64(time.Millisecond))

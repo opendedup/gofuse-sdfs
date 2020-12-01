@@ -8,6 +8,7 @@ import (
 
 	ffs "github.com/hanwen/go-fuse/v2/fs"
 	"github.com/hanwen/go-fuse/v2/fuse"
+	log "github.com/sirupsen/logrus"
 )
 
 type sdfsDirStream struct {
@@ -22,6 +23,7 @@ type sdfsDirStream struct {
 func NewsdfsDirStream(ctx context.Context, name string) (ffs.DirStream, syscall.Errno) {
 	_, err := con.Stat(ctx, name)
 	if err != nil {
+		log.Debugf("error creating new lister for %s %v", name, err)
 		return nil, ToErrno(err)
 	}
 
@@ -53,12 +55,14 @@ func (ds *sdfsDirStream) Next() (fuse.DirEntry, syscall.Errno) {
 	defer ds.mu.Unlock()
 	fi, err := con.GetAttr(ds.ctx, filepath.Join(ds.path, ds.nextEntry))
 	if err != nil {
+		log.Debugf("error getting list next %v", err)
 		return fuse.DirEntry{}, ToErrno(err)
 	}
 	result := fuse.DirEntry{
 		Ino: uint64(fi.Dev),
 
 		Mode: uint32(fi.Mode),
+
 		Name: ds.nextEntry,
 	}
 	return result, ds.load()
@@ -67,6 +71,7 @@ func (ds *sdfsDirStream) Next() (fuse.DirEntry, syscall.Errno) {
 func (ds *sdfsDirStream) load() syscall.Errno {
 	marker, fi, err := con.ListDir(ds.ctx, ds.path, ds.marker, true, 1)
 	if err != nil {
+		log.Debugf("error getting loading list %v", err)
 		return ToErrno(err)
 	}
 	ds.marker = marker

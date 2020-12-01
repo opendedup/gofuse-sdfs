@@ -14,7 +14,9 @@ import (
 	"os"
 	"os/signal"
 	"path"
+	"path/filepath"
 	"runtime/pprof"
+	"strings"
 	"syscall"
 	"time"
 
@@ -22,6 +24,7 @@ import (
 
 	"github.com/hanwen/go-fuse/v2/fs"
 	sdfs "github.com/opendedup/gofuse-s/fs"
+	"github.com/sevlyar/go-daemon"
 )
 
 var mountPath string
@@ -49,15 +52,15 @@ func main() {
 	log.SetFlags(log.Lmicroseconds)
 	// Scans the arg list and sets up flags
 	debug := flag.Bool("debug", false, "print debugging messages.")
-	other := flag.Bool("allow-other", false, "mount with -o allowother.")
 	quiet := flag.Bool("q", false, "quiet")
+	daemonize := flag.Bool("d", false, "daemonize mount")
 	pwd := flag.String("pwd", "Password", "The Password for the Volume")
 	disableTrust := flag.Bool("trust-all", false, "Trust Self Signed TLS Certs")
 	cpuprofile := flag.String("cpuprofile", "", "write cpu profile to this file")
 	memprofile := flag.String("memprofile", "", "write memory profile to this file")
 	flag.Parse()
 	if flag.NArg() < 2 {
-		fmt.Printf("usage: %s MOUNTPOINT ORIGINAL\n", path.Base(os.Args[0]))
+		fmt.Printf("usage: %s options source mountpoint\n", path.Base(os.Args[0]))
 		fmt.Printf("\noptions:\n")
 		flag.PrintDefaults()
 		os.Exit(2)
@@ -89,7 +92,12 @@ func main() {
 	}
 
 	orig := flag.Arg(0)
+	if !strings.HasPrefix(orig, "sdfs") {
+		log.Printf("unsupported server type %s, only supports sdfs:// or sdfss://", orig)
+		os.Exit(1)
+	}
 	sdfsRoot, err := sdfs.NewsdfsRoot(orig, *disableTrust, *pwd)
+
 	if err != nil {
 		log.Fatalf("NewsdfsRoot(%s): %v\n", orig, err)
 	}
@@ -102,11 +110,7 @@ func main() {
 		EntryTimeout: &sec,
 	}
 	opts.Debug = *debug
-	opts.AllowOther = *other
-	if opts.AllowOther {
-		// Make the kernel check file permissions for us
-		opts.MountOptions.Options = append(opts.MountOptions.Options, "default_permissions")
-	}
+	opts.MountOptions.Options = append(opts.MountOptions.Options, "default_permissions", "allow_other")
 	sigs := make(chan os.Signal)
 
 	// catch all signals since not explicitly listing
@@ -126,12 +130,43 @@ func main() {
 	opts.MountOptions.Name = "sdfs"
 	// Leave file permissions on "000" files as-is
 	opts.NullPermissions = true
+	opts.ExplicitDataCacheControl = true
 	// Enable diagnostics logging
 	if !*quiet {
 		opts.Logger = log.New(os.Stderr, "", 0)
 	}
+
 	mountPath = flag.Arg(1)
-	server, err := fs.Mount(flag.Arg(1), sdfsRoot, opts)
+	_, file := filepath.Split(mountPath)
+	if *daemonize {
+		mcntxt := &daemon.Context{
+			PidFileName: "/var/run/sdfsmount-" + file + ".pid",
+			PidFilePerm: 0644,
+			LogFileName: "/var/log/sdfsmount-" + file + ".log",
+			LogFilePerm: 0640,
+			WorkDir:     "/var/run/",
+			Umask:       027,
+		}
+		d, err := mcntxt.Reborn()
+		if err != nil {
+			log.Fatal("Unable to run: ", err)
+		}
+		if d != nil {
+			return
+		}
+		defer mcntxt.Release()
+
+		log.Print("- - - - - - - - - - - - - - -")
+		log.Print("daemon started")
+		mount(mountPath, sdfsRoot, opts, quiet)
+	} else {
+		mount(mountPath, sdfsRoot, opts, quiet)
+	}
+
+}
+
+func mount(mountPath string, sdfsRoot fs.InodeEmbedder, opts *fs.Options, quiet *bool) {
+	server, err := fs.Mount(mountPath, sdfsRoot, opts)
 	if err != nil {
 		log.Fatalf("Mount fail: %v\n", err)
 	}

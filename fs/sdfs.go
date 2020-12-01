@@ -11,6 +11,7 @@ import (
 	"github.com/hanwen/go-fuse/v2/fuse"
 	spb "github.com/opendedup/sdfs-client-go/api"
 	sapi "github.com/opendedup/sdfs-client-go/sdfs"
+	log "github.com/sirupsen/logrus"
 )
 
 type sdfsRoot struct {
@@ -48,6 +49,7 @@ func (n *sdfsNode) Getxattr(ctx context.Context, attr string, dest []byte) (uint
 
 	fi, err := con.GetXAttr(ctx, attr, n.path())
 	if err != nil {
+		log.Debugf("getxattr %v", err)
 		return uint32(0), ToErrno(err)
 	}
 	sz := copy(dest, fi)
@@ -58,6 +60,7 @@ func (n *sdfsNode) Setxattr(ctx context.Context, attr string, data []byte, flags
 	s := string(data)
 	err := con.SetXAttr(ctx, attr, s, n.path())
 	if err != nil {
+		log.Debugf("setxattr %v", err)
 		return ToErrno(err)
 	}
 	return ffs.OK
@@ -66,6 +69,7 @@ func (n *sdfsNode) Setxattr(ctx context.Context, attr string, data []byte, flags
 func (n *sdfsNode) Removexattr(ctx context.Context, attr string) syscall.Errno {
 	err := con.RemoveXAttr(ctx, attr, n.path())
 	if err != nil {
+		log.Debugf("removexattr %v", err)
 		return ToErrno(err)
 	}
 	return ffs.OK
@@ -124,6 +128,7 @@ func (n *sdfsNode) Statfs(ctx context.Context, out *fuse.StatfsOut) syscall.Errn
 func (r *sdfsRoot) Getattr(ctx context.Context, f ffs.FileHandle, out *fuse.AttrOut) syscall.Errno {
 	fi, err := con.GetAttr(ctx, r.path())
 	if err != nil {
+		log.Debugf("unable to getattr for %s %v", r.path(), err)
 		return ToErrno(err)
 	}
 	atime := time.Unix(0, fi.Atime*int64(time.Millisecond))
@@ -154,6 +159,7 @@ func (n *sdfsNode) Lookup(ctx context.Context, name string, out *fuse.EntryOut) 
 
 	fi, err := con.GetAttr(ctx, p)
 	if err != nil {
+		log.Debugf("error getting attr for %s %v", name, err)
 		return nil, ToErrno(err)
 	}
 	ToStat(fi, out)
@@ -202,7 +208,7 @@ func (n *sdfsNode) preserveOwner(ctx context.Context, path string) error {
 	if !ok {
 		return nil
 	}
-	err := con.Chown(ctx, path, int32(caller.Uid), int32(caller.Gid))
+	err := con.Chown(ctx, path, int32(caller.Gid), int32(caller.Uid))
 	if err != nil {
 		return ToErrno(err)
 	}
@@ -260,7 +266,7 @@ func (n *sdfsNode) Rmdir(ctx context.Context, name string) syscall.Errno {
 
 func (n *sdfsNode) Unlink(ctx context.Context, name string) syscall.Errno {
 	p := filepath.Join(n.path(), name)
-	err := con.Unlink(ctx, p)
+	err := con.DeleteFile(ctx, p)
 	if err != nil {
 		return ToErrno(err)
 	}
@@ -284,7 +290,6 @@ func (n *sdfsNode) Rename(ctx context.Context, name string, newParent ffs.InodeE
 
 	p1 := filepath.Join(n.path(), name)
 	p2 := filepath.Join(newParentsdfs.path(), newName)
-
 	err := con.Rename(ctx, p1, p2)
 	return ToErrno(err)
 }
@@ -349,6 +354,7 @@ func (n *sdfsNode) Open(ctx context.Context, flags uint32) (fh ffs.FileHandle, f
 }
 
 func (n *sdfsNode) Opendir(ctx context.Context) syscall.Errno {
+
 	p := n.path()
 	_, err := con.Stat(ctx, p)
 	if err != nil {
@@ -406,6 +412,7 @@ func (n *sdfsNode) Setattr(ctx context.Context, f ffs.FileHandle, in *fuse.SetAt
 			if gok {
 				sgid = int(gid)
 			}
+			log.Printf("setarr uid = %d guid = %d", uid, gid)
 			if err := con.Chown(ctx, p, int32(sgid), int32(suid)); err != nil {
 				return ToErrno(err)
 			}
@@ -424,8 +431,8 @@ func (n *sdfsNode) Setattr(ctx context.Context, f ffs.FileHandle, in *fuse.SetAt
 			if !mok {
 				mp = nil
 			}
-			at := fuse.UtimeToTimespec(ap).Sec
-			mt := fuse.UtimeToTimespec(mp).Sec
+			at := fuse.UtimeToTimespec(ap).Nsec / int64(time.Millisecond)
+			mt := fuse.UtimeToTimespec(mp).Nsec / int64(time.Millisecond)
 
 			if err := con.Utime(ctx, p, at, mt); err != nil {
 				return ffs.ToErrno(err)
@@ -449,6 +456,7 @@ func (n *sdfsNode) Setattr(ctx context.Context, f ffs.FileHandle, in *fuse.SetAt
 	out.SetTimes(&atime, &mtime, &ctime)
 	out.Size = uint64(fi.Size)
 	out.Blocks = uint64(fi.Size / 512)
+	log.Printf("uid = %d guid = %d", fi.Uid, fi.Gid)
 	out.Owner.Uid = uint32(fi.Uid)
 	out.Owner.Gid = uint32(fi.Gid)
 	out.Mode = uint32(fi.Mode)

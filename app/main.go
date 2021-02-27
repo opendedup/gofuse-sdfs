@@ -24,6 +24,7 @@ import (
 
 	"github.com/hanwen/go-fuse/v2/fs"
 	sdfs "github.com/opendedup/gofuse-s/fs"
+	spb "github.com/opendedup/sdfs-client-go/api"
 	"github.com/sevlyar/go-daemon"
 )
 
@@ -58,6 +59,7 @@ func main() {
 	disableTrust := flag.Bool("trust-all", false, "Trust Self Signed TLS Certs")
 	cpuprofile := flag.String("cpuprofile", "", "write cpu profile to this file")
 	memprofile := flag.String("memprofile", "", "write memory profile to this file")
+	trustCert := flag.Bool("trust-cert", false, "Trust the certificate for url specified. This will download and store the certificate in $HOME/.sdfs/keys")
 	flag.Parse()
 	if flag.NArg() < 2 {
 		fmt.Printf("usage: %s options source mountpoint\n", path.Base(os.Args[0]))
@@ -95,6 +97,12 @@ func main() {
 	if !strings.HasPrefix(orig, "sdfs") {
 		log.Printf("unsupported server type %s, only supports sdfs:// or sdfss://", orig)
 		os.Exit(1)
+	}
+	if *trustCert {
+		err := spb.AddTrustedCert(orig)
+		if err != nil {
+			log.Fatalf("Unable to download cert from (%s): %v\n", orig, err)
+		}
 	}
 	sdfsRoot, err := sdfs.NewsdfsRoot(orig, *disableTrust, *pwd)
 

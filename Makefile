@@ -5,6 +5,7 @@ GOARCH := $(shell go env GOARCH)
 GOOS := $(shell go env GOOS)
 
 VERSION ?= $(shell git describe --tags)
+BRANCH := $(shell git rev-parse --abbrev-ref HEAD)
 TAG ?= "sdfs/mount.sdfs:$(VERSION)"
 
 all: getdeps build
@@ -38,7 +39,7 @@ lint:
 # Builds mount.sdfs locally.
 build:
 	@echo "Building mount.sdfs binary to './mount.sdfs'"
-	@go build -o ./mount.sdfs app/* 
+	@go build  -ldflags="-X 'main.Version=$(BRANCH)' -X 'main.BuildDate=$$(date -Ins)'" -o ./mount.sdfs app/* 
 
 # Builds mount.sdfs and installs it to $GOPATH/bin.
 install: build

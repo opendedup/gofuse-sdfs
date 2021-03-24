@@ -10,7 +10,7 @@ package main
 import (
 	"flag"
 	"fmt"
-	"log"
+	olog "log"
 	"os"
 	"os/signal"
 	"path"
@@ -19,6 +19,8 @@ import (
 	"strings"
 	"syscall"
 	"time"
+
+	log "github.com/sirupsen/logrus"
 
 	unix "golang.org/x/sys/unix"
 
@@ -29,6 +31,8 @@ import (
 )
 
 var mountPath string
+var Version = "development"
+var BuildDate = "NAN"
 
 func writeMemProfile(fn string, sigs <-chan os.Signal) {
 	i := 0
@@ -50,23 +54,30 @@ func writeMemProfile(fn string, sigs <-chan os.Signal) {
 }
 
 func main() {
-	log.SetFlags(log.Lmicroseconds)
+	olog.SetFlags(olog.Lmicroseconds)
 	// Scans the arg list and sets up flags
 	debug := flag.Bool("debug", false, "print debugging messages.")
 	quiet := flag.Bool("q", false, "quiet")
 	daemonize := flag.Bool("d", false, "daemonize mount")
 	pwd := flag.String("pwd", "Password", "The Password for the Volume")
 	disableTrust := flag.Bool("trust-all", false, "Trust Self Signed TLS Certs")
+	version := flag.Bool("version", false, "The Version of this build")
 	cpuprofile := flag.String("cpuprofile", "", "write cpu profile to this file")
 	memprofile := flag.String("memprofile", "", "write memory profile to this file")
 	trustCert := flag.Bool("trust-cert", false, "Trust the certificate for url specified. This will download and store the certificate in $HOME/.sdfs/keys")
 	flag.Parse()
+	if *version {
+		fmt.Printf("Version : %s\n", Version)
+		fmt.Printf("Build Date: %s\n", BuildDate)
+		os.Exit(0)
+	}
 	if flag.NArg() < 2 {
 		fmt.Printf("usage: %s options source mountpoint\n", path.Base(os.Args[0]))
 		fmt.Printf("\noptions:\n")
 		flag.PrintDefaults()
 		os.Exit(2)
 	}
+
 	if *cpuprofile != "" {
 		if !*quiet {
 			fmt.Printf("Writing cpu profile to %s\n", *cpuprofile)
@@ -94,6 +105,7 @@ func main() {
 	}
 
 	orig := flag.Arg(0)
+	mountPath = flag.Arg(1)
 	if !strings.HasPrefix(orig, "sdfs") {
 		log.Printf("unsupported server type %s, only supports sdfs:// or sdfss://", orig)
 		os.Exit(1)
@@ -104,12 +116,11 @@ func main() {
 			log.Fatalf("Unable to download cert from (%s): %v\n", orig, err)
 		}
 	}
-	sdfsRoot, err := sdfs.NewsdfsRoot(orig, *disableTrust, *pwd)
+	sdfsRoot, err := sdfs.NewsdfsRoot(orig, mountPath, *disableTrust, *pwd)
 
 	if err != nil {
 		log.Fatalf("NewsdfsRoot(%s): %v\n", orig, err)
 	}
-
 	sec := time.Second
 	opts := &fs.Options{
 		// These options are to be compatible with libfuse defaults,
@@ -118,6 +129,9 @@ func main() {
 		EntryTimeout: &sec,
 	}
 	opts.Debug = *debug
+	if opts.Debug {
+		sdfs.SetLogLevel(log.DebugLevel)
+	}
 	opts.MountOptions.Options = append(opts.MountOptions.Options, "default_permissions", "allow_other")
 	sigs := make(chan os.Signal)
 
@@ -141,10 +155,9 @@ func main() {
 	opts.ExplicitDataCacheControl = true
 	// Enable diagnostics logging
 	if !*quiet {
-		opts.Logger = log.New(os.Stderr, "", 0)
+		opts.Logger = olog.New(os.Stderr, "", 0)
 	}
 
-	mountPath = flag.Arg(1)
 	_, file := filepath.Split(mountPath)
 	if *daemonize {
 		mcntxt := &daemon.Context{
@@ -157,7 +170,7 @@ func main() {
 		}
 		d, err := mcntxt.Reborn()
 		if err != nil {
-			log.Fatal("Unable to run: ", err)
+			log.Fatalf("Unable to run: %v", err)
 		}
 		if d != nil {
 			return

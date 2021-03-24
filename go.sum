@@ -133,8 +133,12 @@ github.com/grpc-ecosystem/go-grpc-prometheus v1.2.0/go.mod h1:8NvIoxWQoOIhqOTXgf
 github.com/grpc-ecosystem/grpc-gateway v1.9.5/go.mod h1:vNeuVxBJEsws4ogUvrchl83t/GYV9WGTSLVdBhOQFDY=
 github.com/hanwen/go-fuse v1.0.0 h1:GxS9Zrn6c35/BnfiVsZVWmsG803xwE7eVRDvcf/BEVc=
 github.com/hanwen/go-fuse v1.0.0/go.mod h1:unqXarDXqzAk0rt98O2tVndEPIpUgLD9+rwFisZH3Ok=
+github.com/hanwen/go-fuse v1.0.1-0.20190726130028-2f298055551b h1:ek6pftAVF7gXlt1SgPMIotytc+sSx5TpXgKa/kBcIy4=
+github.com/hanwen/go-fuse v1.0.1-0.20190726130028-2f298055551b/go.mod h1:PHVWttMW0DYH6ESFXdZ8S+STmGjwEuGX6gsCPi605mg=
 github.com/hanwen/go-fuse/v2 v2.0.3 h1:kpV28BKeSyVgZREItBLnaVBvOEwv2PuhNdKetwnvNHo=
 github.com/hanwen/go-fuse/v2 v2.0.3/go.mod h1:0EQM6aH2ctVpvZ6a+onrQ/vaykxh2GH7hy3e13vzTUY=
+github.com/hanwen/go-fuse/v2 v2.0.4-0.20210201080917-0f728ba15b38 h1:nhFQK6baxxXUteaEewbvs41q29d6LI0BLFH3xCqL84w=
+github.com/hanwen/go-fuse/v2 v2.0.4-0.20210201080917-0f728ba15b38/go.mod h1:oRyA5eK+pvJyv5otpO/DgccS8y/RvYMaO00GgRLGryc=
 github.com/hashicorp/errwrap v1.0.0/go.mod h1:YH+1FKiLXxHSkmPseP+kNlulaMuP3n2brvKWEqk/Jc4=
 github.com/hashicorp/go-cleanhttp v0.5.0/go.mod h1:JpRdi6/HCYpAwUzNwuwqhbovhLtngrth3wmdIIUrZ80=
 github.com/hashicorp/go-cleanhttp v0.5.1/go.mod h1:JpRdi6/HCYpAwUzNwuwqhbovhLtngrth3wmdIIUrZ80=
@@ -286,6 +290,8 @@ github.com/opendedup/sdfs-client-go v0.1.29 h1:npjcqs4k7iHOI1i/mwVvSxKe9eM3uvpOe
 github.com/opendedup/sdfs-client-go v0.1.29/go.mod h1:7iQC+AUl6vx6Yb7lXPTE/liUO75qIT3Wk4OgUR5+3Kk=
 github.com/opendedup/sdfs-client-go v0.1.36 h1:ruQfK6RiJXf5dDak45negSRjLIkT2TNjiqWQw8//RHY=
 github.com/opendedup/sdfs-client-go v0.1.36/go.mod h1:46jEurm60ArPZSrKX/Dy/2UJYwvUV8kG2BS3b8tFfm0=
+github.com/opendedup/sdfs-client-go v0.1.37-0.20210324192640-d0f211cd6b3e h1:86uKXtcCl3VaGHJUgENQy6d8dTrDFOPRAGduZC58Ih4=
+github.com/opendedup/sdfs-client-go v0.1.37-0.20210324192640-d0f211cd6b3e/go.mod h1:46jEurm60ArPZSrKX/Dy/2UJYwvUV8kG2BS3b8tFfm0=
 github.com/opentracing/opentracing-go v1.1.0/go.mod h1:UkNAQd3GIcIGf0SeVgPpRdFStlNbqXla1AfSYxPUl2o=
 github.com/pascaldekloe/goe v0.1.0/go.mod h1:lzWF7FIEvWOWxwDKqyGYQf6ZUaNfKdP144TG7ZOy1lc=
 github.com/pborman/getopt v0.0.0-20180729010549-6fdd0a2c7117/go.mod h1:85jBQOZwpVEaDAr341tbn15RS4fCAsIst0qp7i8ex1o=
@@ -420,6 +426,7 @@ golang.org/x/sync v0.0.0-20190227155943-e225da77a7e6/go.mod h1:RxMgew5VJxzue5/jJ
 golang.org/x/sync v0.0.0-20190423024810-112230192c58/go.mod h1:RxMgew5VJxzue5/jJTE5uejpjVlOe/izrB70Jof72aM=
 golang.org/x/sync v0.0.0-20190911185100-cd5d95a43a6e/go.mod h1:RxMgew5VJxzue5/jJTE5uejpjVlOe/izrB70Jof72aM=
 golang.org/x/sync v0.0.0-20200625203802-6e8e738ad208/go.mod h1:RxMgew5VJxzue5/jJTE5uejpjVlOe/izrB70Jof72aM=
+golang.org/x/sync v0.0.0-20201207232520-09787c993a3a/go.mod h1:RxMgew5VJxzue5/jJTE5uejpjVlOe/izrB70Jof72aM=
 golang.org/x/sys v0.0.0-20180823144017-11551d06cbcc/go.mod h1:STP8DvDyc/dI5b8T5hshtkjS+E42TnysNCUPdjciGhY=
 golang.org/x/sys v0.0.0-20180830151530-49385e6e1522 h1:Ve1ORMCxvRmSXBwJK+t3Oy+V2vRW2OetUQBq4rJIkZE=
 golang.org/x/sys v0.0.0-20180830151530-49385e6e1522/go.mod h1:STP8DvDyc/dI5b8T5hshtkjS+E42TnysNCUPdjciGhY=

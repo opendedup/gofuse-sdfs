@@ -26,8 +26,8 @@ verifiers: getdeps fmt lint
 
 fmt:
 	@echo "Running $@ check"
-	@GO111MODULE=on gofmt -d cmd/
-	@GO111MODULE=on gofmt -d pkg/
+	@GO111MODULE=on gofmt -d app/
+	@GO111MODULE=on gofmt -d fs/
 
 lint:
 	@echo "Running $@ check"
@@ -39,7 +39,7 @@ lint:
 # Builds mount.sdfs locally.
 build:
 	@echo "Building mount.sdfs binary to './mount.sdfs'"
-	@go build  -ldflags="-X 'main.Version=$(BRANCH)' -X 'main.BuildDate=$$(date -Ins)'" -o ./mount.sdfs app/* 
+	@go build  -ldflags="-X 'main.Version=$(BRANCH)' -X 'main.BuildDate=$$(date -Iseconds)'" -o ./mount.sdfs app/* 
 
 # Builds mount.sdfs and installs it to $GOPATH/bin.
 install: build

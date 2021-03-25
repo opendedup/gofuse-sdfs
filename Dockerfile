@@ -7,7 +7,6 @@ ENV CGO_ENABLED 0
 ENV GO111MODULE on
 COPY ./ /go/gofuse-sdfs
 
-RUN  \
-     apk add --no-cache git && \
-     cd /go/gofuse-sdfs && \
-     go build -o ./mount.sdfs app/*
+RUN  apk add --no-cache build-base git
+WORKDIR /go/gofuse-sdfs/
+RUN make clean && make build

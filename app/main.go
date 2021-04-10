@@ -78,7 +78,7 @@ func main() {
 	// Scans the arg list and sets up flags
 	debug := flag.Bool("debug", false, "print debugging messages.")
 	quiet := flag.Bool("q", false, "quiet")
-	daemonize := flag.Bool("d", false, "daemonize mount")
+	standalone := flag.Bool("s", false, "do not daemonize mount")
 	pwd := flag.String("pwd", "Password", "The Password for the Volume")
 	disableTrust := flag.Bool("trust-all", false, "Trust Self Signed TLS Certs")
 	version := flag.Bool("version", false, "The Version of this build")
@@ -237,7 +237,7 @@ func main() {
 	_, file := filepath.Split(mountPath)
 	os.MkdirAll("/var/run/sdfs/", os.ModePerm)
 	os.MkdirAll("/var/log/sdfs/", os.ModePerm)
-	if *daemonize {
+	if !*standalone {
 
 		pidFile := "/var/run/sdfs/mount-" + file + ".pid"
 		logFile := "/var/log/sdfs/mount-" + file + ".log"

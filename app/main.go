@@ -8,17 +8,25 @@
 package main
 
 import (
+	"context"
+	"encoding/xml"
 	"flag"
 	"fmt"
-	"log"
+	"io"
+	"io/ioutil"
+	olog "log"
 	"os"
+	"os/exec"
 	"os/signal"
 	"path"
 	"path/filepath"
 	"runtime/pprof"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
+
+	log "github.com/sirupsen/logrus"
 
 	unix "golang.org/x/sys/unix"
 
@@ -29,6 +37,22 @@ import (
 )
 
 var mountPath string
+var serverPath string
+var Version = "development"
+var BuildDate = "NAN"
+var StartExec = "SDFS Volume Service Started"
+var running bool
+
+type Subsystem struct {
+	XMLName xml.Name `xml:"subsystem-config"`
+	Sdfscli Sdfscli  `xml:"sdfscli"`
+}
+
+type Sdfscli struct {
+	XMLName xml.Name `xml:"sdfscli"`
+	Port    string   `xml:"port,attr"`
+	Usessl  bool     `xml:"use-ssl,attr"`
+}
 
 func writeMemProfile(fn string, sigs <-chan os.Signal) {
 	i := 0
@@ -50,23 +74,30 @@ func writeMemProfile(fn string, sigs <-chan os.Signal) {
 }
 
 func main() {
-	log.SetFlags(log.Lmicroseconds)
+	olog.SetFlags(olog.Lmicroseconds)
 	// Scans the arg list and sets up flags
 	debug := flag.Bool("debug", false, "print debugging messages.")
 	quiet := flag.Bool("q", false, "quiet")
-	daemonize := flag.Bool("d", false, "daemonize mount")
+	standalone := flag.Bool("s", false, "do not daemonize mount")
 	pwd := flag.String("pwd", "Password", "The Password for the Volume")
 	disableTrust := flag.Bool("trust-all", false, "Trust Self Signed TLS Certs")
+	version := flag.Bool("version", false, "The Version of this build")
 	cpuprofile := flag.String("cpuprofile", "", "write cpu profile to this file")
 	memprofile := flag.String("memprofile", "", "write memory profile to this file")
 	trustCert := flag.Bool("trust-cert", false, "Trust the certificate for url specified. This will download and store the certificate in $HOME/.sdfs/keys")
 	flag.Parse()
+	if *version {
+		fmt.Printf("Version : %s\n", Version)
+		fmt.Printf("Build Date: %s\n", BuildDate)
+		os.Exit(0)
+	}
 	if flag.NArg() < 2 {
 		fmt.Printf("usage: %s options source mountpoint\n", path.Base(os.Args[0]))
 		fmt.Printf("\noptions:\n")
 		flag.PrintDefaults()
 		os.Exit(2)
 	}
+
 	if *cpuprofile != "" {
 		if !*quiet {
 			fmt.Printf("Writing cpu profile to %s\n", *cpuprofile)
@@ -94,9 +125,66 @@ func main() {
 	}
 
 	orig := flag.Arg(0)
-	if !strings.HasPrefix(orig, "sdfs") {
-		log.Printf("unsupported server type %s, only supports sdfs:// or sdfss://", orig)
-		os.Exit(1)
+	mountPath = flag.Arg(1)
+	if !strings.HasPrefix(orig, "sdfss://") && !strings.HasPrefix(orig, "sdfs://") {
+		xmlFilePath := fmt.Sprintf("/etc/sdfs/%s-volume-cfg.xml", orig)
+		if _, err := os.Stat(xmlFilePath); os.IsNotExist(err) {
+			fmt.Printf("File %s does not exist", xmlFilePath)
+			os.Exit(1)
+		}
+		basePath := os.Getenv("SDFS_BASE_PATH")
+		if len(basePath) == 0 {
+			basePath = "/usr/share/sdfs"
+		}
+		cmd := exec.Command(basePath+"/startsdfs", "-n", "-v", orig)
+		stdoutIn, _ := cmd.StdoutPipe()
+		stderrIn, _ := cmd.StderrPipe()
+		err := cmd.Start()
+		if err != nil {
+			log.Fatalf("%s/startsdfs -n -v %s failed with '%v'\n", basePath, orig, err)
+		}
+
+		// cmd.Wait() should be called only after we finish reading
+		// from stdoutIn and stderrIn.
+		// wg ensures that we finish
+		var wg sync.WaitGroup
+		wg.Add(1)
+		go func() {
+			copyAndCapture(os.Stdout, stdoutIn)
+			wg.Done()
+			if running {
+				stderrIn.Close()
+			}
+		}()
+		if !running {
+			copyAndCapture(os.Stderr, stderrIn)
+		}
+		wg.Wait()
+		err = cmd.Wait()
+		if err != nil && !running {
+			fmt.Printf("Error running command %s %s %s %s\n", "startsdfs", "-n", "-v", orig)
+			fmt.Printf("Error : %v\n", err)
+			os.Exit(1)
+		}
+		xmlFile, err := os.Open(xmlFilePath)
+		// if we os.Open returns an error then handle it
+		if err != nil {
+			fmt.Printf("Error Reading %s : %v\n", xmlFilePath, err)
+			os.Exit(1)
+		}
+
+		byteValue, _ := ioutil.ReadAll(xmlFile)
+
+		var subsystem Subsystem
+		xml.Unmarshal(byteValue, &subsystem)
+		if subsystem.Sdfscli.Usessl {
+			*disableTrust = true
+			orig = fmt.Sprintf("sdfss://localhost:%s", subsystem.Sdfscli.Port)
+		} else {
+			orig = fmt.Sprintf("sdfs://localhost:%s", subsystem.Sdfscli.Port)
+		}
+		serverPath = orig
+
 	}
 	if *trustCert {
 		err := spb.AddTrustedCert(orig)
@@ -104,12 +192,11 @@ func main() {
 			log.Fatalf("Unable to download cert from (%s): %v\n", orig, err)
 		}
 	}
-	sdfsRoot, err := sdfs.NewsdfsRoot(orig, *disableTrust, *pwd)
+	sdfsRoot, err := sdfs.NewsdfsRoot(orig, mountPath, *disableTrust, *pwd)
 
 	if err != nil {
 		log.Fatalf("NewsdfsRoot(%s): %v\n", orig, err)
 	}
-
 	sec := time.Second
 	opts := &fs.Options{
 		// These options are to be compatible with libfuse defaults,
@@ -118,6 +205,9 @@ func main() {
 		EntryTimeout: &sec,
 	}
 	opts.Debug = *debug
+	if opts.Debug {
+		sdfs.SetLogLevel(log.DebugLevel)
+	}
 	opts.MountOptions.Options = append(opts.MountOptions.Options, "default_permissions", "allow_other")
 	sigs := make(chan os.Signal)
 
@@ -141,31 +231,37 @@ func main() {
 	opts.ExplicitDataCacheControl = true
 	// Enable diagnostics logging
 	if !*quiet {
-		opts.Logger = log.New(os.Stderr, "", 0)
+		opts.Logger = olog.New(os.Stderr, "", 0)
 	}
 
-	mountPath = flag.Arg(1)
 	_, file := filepath.Split(mountPath)
-	if *daemonize {
+	os.MkdirAll("/var/run/sdfs/", os.ModePerm)
+	os.MkdirAll("/var/log/sdfs/", os.ModePerm)
+	if !*standalone {
+
+		pidFile := "/var/run/sdfs/mount-" + file + ".pid"
+		logFile := "/var/log/sdfs/mount-" + file + ".log"
 		mcntxt := &daemon.Context{
-			PidFileName: "/var/run/sdfsmount-" + file + ".pid",
+			PidFileName: pidFile,
 			PidFilePerm: 0644,
-			LogFileName: "/var/log/sdfsmount-" + file + ".log",
+			LogFileName: logFile,
 			LogFilePerm: 0640,
 			WorkDir:     "/var/run/",
 			Umask:       027,
+			Env:         []string{"SDFSCLIENT=" + orig},
 		}
+
 		d, err := mcntxt.Reborn()
 		if err != nil {
-			log.Fatal("Unable to run: ", err)
+			log.Errorf("Unable to run: %v \n", err)
+			AppCleanup()
+			os.Exit(3)
 		}
 		if d != nil {
 			return
 		}
 		defer mcntxt.Release()
-
-		log.Print("- - - - - - - - - - - - - - -")
-		log.Print("daemon started")
+		log.Print("Volume Mounting to " + mountPath)
 		mount(mountPath, sdfsRoot, opts, quiet)
 	} else {
 		mount(mountPath, sdfsRoot, opts, quiet)
@@ -176,19 +272,70 @@ func main() {
 func mount(mountPath string, sdfsRoot fs.InodeEmbedder, opts *fs.Options, quiet *bool) {
 	server, err := fs.Mount(mountPath, sdfsRoot, opts)
 	if err != nil {
-		log.Fatalf("Mount fail: %v\n", err)
+		log.Errorf("Mount fail: %v\n", err)
+		AppCleanup()
+		os.Exit(5)
 	}
 	if !*quiet {
 		log.Printf("Mounted %s from %s\n", mountPath, flag.Arg(0))
 	}
 	server.Wait()
+	if running {
+		log.Printf("Unmounting %s \n", mountPath)
+		con, err := spb.NewConnection(serverPath)
+		if err != nil {
+			log.Errorf("shutdown fail: %v\n", err)
+		}
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+		con.ShutdownVolume(ctx)
+		log.Printf("Unmounted %s \n", mountPath)
+	}
 }
 
 //AppCleanup unmounts volume before shutdown
 func AppCleanup() {
+	if running {
+		con, err := spb.NewConnection(serverPath)
+		if err != nil {
+			log.Errorf("shutdown fail: %v\n", err)
+		}
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+		con.ShutdownVolume(ctx)
+	}
 	log.Printf("Unmounting %s \n", mountPath)
+
 	err := unix.Unmount(mountPath, 0)
 	if err != nil {
-		log.Fatalf("Unmount fail: %v\n", err)
+		log.Errorf("Unmount fail: %v\n", err)
+	}
+
+}
+
+func copyAndCapture(w io.Writer, r io.Reader) ([]byte, error) {
+	var out []byte
+	buf := make([]byte, 1024)
+	for {
+		n, err := r.Read(buf[:])
+		if n > 0 {
+			d := buf[:n]
+			out = append(out, d...)
+			_, err := w.Write(d)
+			if strings.TrimSpace(string(d)) == "SDFS Volume Service Started" || strings.HasPrefix(strings.TrimSpace(string(d)), "Still running according to PID file") {
+				running = true
+				return out, nil
+			}
+			if err != nil {
+				return out, err
+			}
+		}
+		if err != nil {
+			// Read returns io.EOF at the end of file, which is not an error for us
+			if err == io.EOF {
+				err = nil
+			}
+			return out, err
+		}
 	}
 }

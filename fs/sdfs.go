@@ -16,8 +16,9 @@ import (
 
 type sdfsRoot struct {
 	sdfsNode
-	rootPath string
-	rootDev  uint64
+	rootPath  string
+	rootMount string
+	rootDev   uint64
 }
 
 type sdfsNode struct {
@@ -26,7 +27,6 @@ type sdfsNode struct {
 
 var con *spb.SdfsConnection = nil
 
-var _ = (ffs.NodeStatfser)((*sdfsNode)(nil))
 var _ = (ffs.NodeStatfser)((*sdfsNode)(nil))
 var _ = (ffs.NodeGetattrer)((*sdfsNode)(nil))
 var _ = (ffs.NodeGetxattrer)((*sdfsNode)(nil))
@@ -41,9 +41,17 @@ var _ = (ffs.NodeReaddirer)((*sdfsNode)(nil))
 var _ = (ffs.NodeMkdirer)((*sdfsNode)(nil))
 var _ = (ffs.NodeMknoder)((*sdfsNode)(nil))
 var _ = (ffs.NodeSymlinker)((*sdfsNode)(nil))
+var _ = (ffs.NodeReadlinker)((*sdfsNode)(nil))
 var _ = (ffs.NodeUnlinker)((*sdfsNode)(nil))
 var _ = (ffs.NodeRmdirer)((*sdfsNode)(nil))
 var _ = (ffs.NodeRenamer)((*sdfsNode)(nil))
+var _ = (ffs.NodeSetattrer)((*sdfsNode)(nil))
+var _ = (ffs.NodeCreater)((*sdfsNode)(nil))
+
+//SetLogLevel sets the log level for this service
+func SetLogLevel(level log.Level) {
+	log.SetLevel(level)
+}
 
 func (n *sdfsNode) Getxattr(ctx context.Context, attr string, dest []byte) (uint32, syscall.Errno) {
 
@@ -144,6 +152,16 @@ func (r *sdfsRoot) Getattr(ctx context.Context, f ffs.FileHandle, out *fuse.Attr
 	return ffs.OK
 }
 
+//Readlink reads a symlink path from the sdfs filesystem
+func (n *sdfsNode) Readlink(ctx context.Context) ([]byte, syscall.Errno) {
+	fi, err := con.ReadLink(ctx, n.path())
+	if err != nil {
+		log.Debugf("unable to readlink for %s %v", n.path(), err)
+		return nil, ToErrno(err)
+	}
+	return []byte(fi), ffs.OK
+}
+
 func (n *sdfsNode) root() *sdfsRoot {
 	return n.Root().Operations().(*sdfsRoot)
 }
@@ -154,7 +172,6 @@ func (n *sdfsNode) path() string {
 }
 
 func (n *sdfsNode) Lookup(ctx context.Context, name string, out *fuse.EntryOut) (*ffs.Inode, syscall.Errno) {
-
 	p := filepath.Join(n.path(), name)
 
 	fi, err := con.GetAttr(ctx, p)
@@ -208,6 +225,7 @@ func (n *sdfsNode) preserveOwner(ctx context.Context, path string) error {
 	if !ok {
 		return nil
 	}
+	log.Debugf("setting chown for %s %d %d", path, caller.Gid, caller.Uid)
 	err := con.Chown(ctx, path, int32(caller.Gid), int32(caller.Uid))
 	if err != nil {
 		return ToErrno(err)
@@ -302,8 +320,6 @@ func (r *sdfsRoot) idFromStat(st *sapi.Stat) ffs.StableAttr {
 	}
 }
 
-var _ = (ffs.NodeCreater)((*sdfsNode)(nil))
-
 func (n *sdfsNode) Create(ctx context.Context, name string, flags uint32, mode uint32, out *fuse.EntryOut) (inode *ffs.Inode, fh ffs.FileHandle, fuseFlags uint32, errno syscall.Errno) {
 	p := filepath.Join(n.path(), name)
 	err := con.MkNod(ctx, p, int32(mode), 0)
@@ -324,21 +340,22 @@ func (n *sdfsNode) Create(ctx context.Context, name string, flags uint32, mode u
 	return ch, lf, 0, 0
 }
 
-func (n *sdfsNode) Symlink(ctx context.Context, target, name string, out *fuse.EntryOut) (*ffs.Inode, syscall.Errno) {
-	p := filepath.Join(n.path(), name)
-	err := con.SymLink(ctx, p, target)
+func (n *sdfsNode) Symlink(ctx context.Context, name, target string, out *fuse.EntryOut) (*ffs.Inode, syscall.Errno) {
+	//p := filepath.Join(n.path(), name)
+	err := con.SymLink(ctx, name, target)
 	if err != nil {
+		log.Debugf("error during symlink %s to %s : %v", name, target, err)
 		return nil, ToErrno(err)
 	}
-	n.preserveOwner(ctx, p)
-	fi, err := con.GetAttr(ctx, p)
+	n.preserveOwner(ctx, target)
+	fi, err := con.GetAttr(ctx, target)
 	if err != nil {
-		con.Unlink(ctx, p)
+		log.Debugf("error getting attr during symlink %s to %s :%v", name, target, err)
+		con.Unlink(ctx, target)
 		return nil, ToErrno(err)
 	}
 	node := &sdfsNode{}
 	ch := n.NewInode(ctx, node, n.root().idFromStat(fi))
-
 	return ch, 0
 }
 
@@ -387,12 +404,13 @@ func (n *sdfsNode) Getattr(ctx context.Context, f ffs.FileHandle, out *fuse.Attr
 	return ffs.OK
 }
 
-var _ = (ffs.NodeSetattrer)((*sdfsNode)(nil))
-
 func (n *sdfsNode) Setattr(ctx context.Context, f ffs.FileHandle, in *fuse.SetAttrIn, out *fuse.AttrOut) syscall.Errno {
 	p := n.path()
+	z := n.Path(&n.Inode)
+	log.Printf("z = %s", z)
 	fsa, ok := f.(ffs.FileSetattrer)
 	if ok && fsa != nil {
+
 		fsa.Setattr(ctx, in, out)
 	} else {
 		if m, ok := in.GetMode(); ok {
@@ -400,7 +418,7 @@ func (n *sdfsNode) Setattr(ctx context.Context, f ffs.FileHandle, in *fuse.SetAt
 				return ToErrno(err)
 			}
 		}
-
+		log.Debugf("reading %v", in)
 		uid, uok := in.GetUID()
 		gid, gok := in.GetGID()
 		if uok || gok {
@@ -412,7 +430,7 @@ func (n *sdfsNode) Setattr(ctx context.Context, f ffs.FileHandle, in *fuse.SetAt
 			if gok {
 				sgid = int(gid)
 			}
-			log.Printf("setarr uid = %d guid = %d", uid, gid)
+			log.Printf("setarr uid = %d guid = %d path = %s", uid, gid, p)
 			if err := con.Chown(ctx, p, int32(sgid), int32(suid)); err != nil {
 				return ToErrno(err)
 			}
@@ -468,7 +486,7 @@ func (n *sdfsNode) Setattr(ctx context.Context, f ffs.FileHandle, in *fuse.SetAt
 // NewsdfsRoot returns a root node for a sdfs file system whose
 // root is at the given root. This node implements all NodeXxxxer
 // operations available.
-func NewsdfsRoot(root string, disableTrust bool, password string) (ffs.InodeEmbedder, error) {
+func NewsdfsRoot(root string, mnt string, disableTrust bool, password string) (ffs.InodeEmbedder, error) {
 	var err error
 	spb.DisableTrust = disableTrust
 	spb.Password = password
@@ -483,8 +501,9 @@ func NewsdfsRoot(root string, disableTrust bool, password string) (ffs.InodeEmbe
 		return nil, err
 	}
 	n := &sdfsRoot{
-		rootPath: "/",
-		rootDev:  uint64(fi.SerialNumber),
+		rootPath:  "/",
+		rootDev:   uint64(fi.SerialNumber),
+		rootMount: mnt,
 	}
 	return n, nil
 }

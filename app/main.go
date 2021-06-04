@@ -76,10 +76,17 @@ func writeMemProfile(fn string, sigs <-chan os.Signal) {
 func main() {
 	olog.SetFlags(olog.Lmicroseconds)
 	// Scans the arg list and sets up flags
+	pwd := flag.String("p", "Password", "The Password to authenticate to the remote Volume")
+	user := flag.String("u", "Admin", "The Username to authenticate to the remote Volume")
+	mtls := flag.Bool("mtls", false, "Use Mutual TLS. This will use the certs located in $HOME/.sdfs/keys/[client.crt,client.key,ca.crt]"+
+		"unless otherwise specified")
+	mtlsca := flag.String("root-ca", "", "The path the CA cert used to sign the MTLS Cert. This defaults to $HOME/.sdfs/keys/ca.crt")
+	mtlskey := flag.String("mtls-key", "", "The path the private used for mutual TLS. This defaults to $HOME/.sdfs/keys/client.key")
+	mtlscert := flag.String("mtls-cert", "", "The path the client cert used for mutual TLS. This defaults to $HOME/.sdfs/keys/client.crt")
+	dedupe := flag.Bool("dedupe", false, "Enable Client Side Dedupe")
 	debug := flag.Bool("debug", false, "print debugging messages.")
 	quiet := flag.Bool("q", false, "quiet")
 	standalone := flag.Bool("s", false, "do not daemonize mount")
-	pwd := flag.String("pwd", "Password", "The Password for the Volume")
 	disableTrust := flag.Bool("trust-all", false, "Trust Self Signed TLS Certs")
 	version := flag.Bool("version", false, "The Version of this build")
 	cpuprofile := flag.String("cpuprofile", "", "write cpu profile to this file")
@@ -122,6 +129,19 @@ func main() {
 		if !*quiet {
 			fmt.Printf("Note: You must unmount gracefully, otherwise the profile file(s) will stay empty!\n")
 		}
+	}
+	if isFlagPassed("root-ca") {
+		spb.MtlsCACert = *mtlsca
+	}
+	if isFlagPassed("mtls-key") {
+		spb.MtlsKey = *mtlskey
+	}
+	if isFlagPassed("mtls-cert") {
+		spb.MtlsCert = *mtlscert
+	}
+	if *mtls {
+		//fmt.Println("Using Mutual TLS")
+		spb.Mtls = *mtls
 	}
 
 	orig := flag.Arg(0)
@@ -192,7 +212,7 @@ func main() {
 			log.Fatalf("Unable to download cert from (%s): %v\n", orig, err)
 		}
 	}
-	sdfsRoot, err := sdfs.NewsdfsRoot(orig, mountPath, *disableTrust, *pwd)
+	sdfsRoot, err := sdfs.NewsdfsRoot(orig, mountPath, *disableTrust, *user, *pwd, *dedupe)
 
 	if err != nil {
 		log.Fatalf("NewsdfsRoot(%s): %v\n", orig, err)
@@ -262,14 +282,14 @@ func main() {
 		}
 		defer mcntxt.Release()
 		log.Print("Volume Mounting to " + mountPath)
-		mount(mountPath, sdfsRoot, opts, quiet)
+		mount(mountPath, sdfsRoot, opts, quiet, dedupe)
 	} else {
-		mount(mountPath, sdfsRoot, opts, quiet)
+		mount(mountPath, sdfsRoot, opts, quiet, dedupe)
 	}
 
 }
 
-func mount(mountPath string, sdfsRoot fs.InodeEmbedder, opts *fs.Options, quiet *bool) {
+func mount(mountPath string, sdfsRoot fs.InodeEmbedder, opts *fs.Options, quiet, dedupe *bool) {
 	server, err := fs.Mount(mountPath, sdfsRoot, opts)
 	if err != nil {
 		log.Errorf("Mount fail: %v\n", err)
@@ -282,7 +302,7 @@ func mount(mountPath string, sdfsRoot fs.InodeEmbedder, opts *fs.Options, quiet 
 	server.Wait()
 	if running {
 		log.Printf("Unmounting %s \n", mountPath)
-		con, err := spb.NewConnection(serverPath)
+		con, err := spb.NewConnection(serverPath, *dedupe)
 		if err != nil {
 			log.Errorf("shutdown fail: %v\n", err)
 		}
@@ -296,7 +316,7 @@ func mount(mountPath string, sdfsRoot fs.InodeEmbedder, opts *fs.Options, quiet 
 //AppCleanup unmounts volume before shutdown
 func AppCleanup() {
 	if running {
-		con, err := spb.NewConnection(serverPath)
+		con, err := spb.NewConnection(serverPath, false)
 		if err != nil {
 			log.Errorf("shutdown fail: %v\n", err)
 		}
@@ -338,4 +358,14 @@ func copyAndCapture(w io.Writer, r io.Reader) ([]byte, error) {
 			return out, err
 		}
 	}
+}
+
+func isFlagPassed(name string) bool {
+	found := false
+	flag.Visit(func(f *flag.Flag) {
+		if f.Name == name {
+			found = true
+		}
+	})
+	return found
 }

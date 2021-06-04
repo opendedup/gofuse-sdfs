@@ -486,11 +486,12 @@ func (n *sdfsNode) Setattr(ctx context.Context, f ffs.FileHandle, in *fuse.SetAt
 // NewsdfsRoot returns a root node for a sdfs file system whose
 // root is at the given root. This node implements all NodeXxxxer
 // operations available.
-func NewsdfsRoot(root string, mnt string, disableTrust bool, password string) (ffs.InodeEmbedder, error) {
+func NewsdfsRoot(root string, mnt string, disableTrust bool, username, password string, dedupe bool) (ffs.InodeEmbedder, error) {
 	var err error
 	spb.DisableTrust = disableTrust
 	spb.Password = password
-	con, err = spb.NewConnection(root)
+	spb.UserName = username
+	con, err = spb.NewConnection(root, dedupe)
 	if err != nil {
 		return nil, err
 	}

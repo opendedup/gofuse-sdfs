@@ -31,7 +31,7 @@ import (
 	unix "golang.org/x/sys/unix"
 
 	"github.com/hanwen/go-fuse/v2/fs"
-	sdfs "github.com/opendedup/gofuse-s/fs"
+	sdfs "github.com/opendedup/gofuse-sdfs/fs"
 	spb "github.com/opendedup/sdfs-client-go/api"
 	"github.com/sevlyar/go-daemon"
 )

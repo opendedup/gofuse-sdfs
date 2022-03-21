@@ -6,9 +6,7 @@ package fs
 
 import (
 	"context"
-	"sync"
 	"time"
-	"unsafe"
 
 	//	"time"
 
@@ -26,7 +24,6 @@ func NewsdfsFile(fd int64, path string) ffs.FileHandle {
 }
 
 type sdfsFile struct {
-	mu   sync.Mutex
 	fd   int64
 	path string
 }
@@ -39,24 +36,6 @@ var _ = (ffs.FileWriter)((*sdfsFile)(nil))
 var _ = (ffs.FileFlusher)((*sdfsFile)(nil))
 var _ = (ffs.FileFsyncer)((*sdfsFile)(nil))
 var _ = (ffs.FileSetattrer)((*sdfsFile)(nil))
-
-func futimens(fd int, times *[2]syscall.Timespec) (err error) {
-	_, _, e1 := syscall.Syscall6(syscall.SYS_UTIMENSAT, uintptr(fd), 0, uintptr(unsafe.Pointer(times)), uintptr(0), 0, 0)
-	if e1 != 0 {
-		err = syscall.Errno(e1)
-	}
-	return
-}
-
-func setBlocks(out *fuse.Attr) {
-	if out.Blksize > 0 {
-		return
-	}
-
-	out.Blksize = 4096
-	pages := (out.Size + 4095) / 4096
-	out.Blocks = pages * 8
-}
 
 func (f *sdfsFile) Read(ctx context.Context, buf []byte, off int64) (res fuse.ReadResult, errno syscall.Errno) {
 

@@ -350,6 +350,10 @@ func (n *sdfsNode) Create(ctx context.Context, name string, flags uint32, mode u
 		return nil, nil, 0, ToErrno(err)
 	}
 	fd, err := con.Open(ctx, p, int32(flags))
+	if err != nil {
+		con.Unlink(ctx, p)
+		return nil, nil, 0, ToErrno(err)
+	}
 	node := &sdfsNode{}
 	ch := n.NewInode(ctx, node, n.root().idFromStat(fi))
 	lf := NewsdfsFile(fd, p)

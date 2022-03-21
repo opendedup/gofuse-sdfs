@@ -36,8 +36,6 @@ import (
 	"github.com/sevlyar/go-daemon"
 )
 
-var mountPath string
-var serverPath string
 var Version = "development"
 var BuildDate = "NAN"
 var StartExec = "SDFS Volume Service Started"
@@ -53,6 +51,8 @@ type Sdfscli struct {
 	Port    string   `xml:"port,attr"`
 	Usessl  bool     `xml:"use-ssl,attr"`
 }
+
+var connectionInfo sdfs.ConnectionInfo
 
 func writeMemProfile(fn string, sigs <-chan os.Signal) {
 	i := 0
@@ -92,6 +92,29 @@ func main() {
 	cpuprofile := flag.String("cpuprofile", "", "write cpu profile to this file")
 	memprofile := flag.String("memprofile", "", "write memory profile to this file")
 	trustCert := flag.Bool("trust-cert", false, "Trust the certificate for url specified. This will download and store the certificate in $HOME/.sdfs/keys")
+	buffers := flag.Int("dedupe-buffers", 4, "number of local cache buffers for dedupe")
+	threads := flag.Int("dedupe-threads", 4, "number of threads used for dedupe")
+	logPath := flag.String("log-path", "/var/log/sdfs/", "Base Path for logs")
+	cachsize := flag.Int("dedupe-cache-size", 1000000, "Cache size for client size dedupe")
+	cachage := flag.Int("dedupe-cache-age", 30, "Maximum age for local dedupe cache")
+	volumeid := flag.Int64("volumeID", -1, "The volume id to connect to. Required for access through proxy")
+	nocompress := flag.Bool("nocompress", false, "Compress api traffic")
+
+	connectionInfo = sdfs.ConnectionInfo{
+		Buffers:      *buffers,
+		Threads:      *threads,
+		LogPath:      *logPath,
+		Cachsize:     *cachsize,
+		Cachage:      *cachage,
+		Volumeid:     *volumeid,
+		Nocompress:   *nocompress,
+		Dedupe:       *dedupe,
+		Debug:        *debug,
+		User:         *user,
+		Pwd:          *pwd,
+		DisableTrust: *disableTrust,
+	}
+
 	flag.Parse()
 	if *version {
 		fmt.Printf("Version : %s\n", Version)
@@ -145,7 +168,7 @@ func main() {
 	}
 
 	orig := flag.Arg(0)
-	mountPath = flag.Arg(1)
+	connectionInfo.MountPath = flag.Arg(1)
 	if !strings.HasPrefix(orig, "sdfss://") && !strings.HasPrefix(orig, "sdfs://") {
 		xmlFilePath := fmt.Sprintf("/etc/sdfs/%s-volume-cfg.xml", orig)
 		if _, err := os.Stat(xmlFilePath); os.IsNotExist(err) {
@@ -203,7 +226,7 @@ func main() {
 		} else {
 			orig = fmt.Sprintf("sdfs://localhost:%s", subsystem.Sdfscli.Port)
 		}
-		serverPath = orig
+		connectionInfo.ServerPath = orig
 
 	}
 	if *trustCert {
@@ -212,12 +235,12 @@ func main() {
 			log.Fatalf("Unable to download cert from (%s): %v\n", orig, err)
 		}
 	}
-	sdfsRoot, err := sdfs.NewsdfsRoot(orig, mountPath, *disableTrust, *user, *pwd, *dedupe)
+	sdfsRoot, err := sdfs.NewsdfsRoot(orig, connectionInfo)
 
 	if err != nil {
 		log.Fatalf("NewsdfsRoot(%s): %v\n", orig, err)
 	}
-	sec := time.Second
+	sec := time.Second * 10
 	opts := &fs.Options{
 		// These options are to be compatible with libfuse defaults,
 		// making benchmarking easier.
@@ -254,7 +277,7 @@ func main() {
 		opts.Logger = olog.New(os.Stderr, "", 0)
 	}
 
-	_, file := filepath.Split(mountPath)
+	_, file := filepath.Split(connectionInfo.MountPath)
 	os.MkdirAll("/var/run/sdfs/", os.ModePerm)
 	os.MkdirAll("/var/log/sdfs/", os.ModePerm)
 	if !*standalone {
@@ -281,42 +304,44 @@ func main() {
 			return
 		}
 		defer mcntxt.Release()
-		log.Print("Volume Mounting to " + mountPath)
-		mount(mountPath, sdfsRoot, opts, quiet, dedupe)
+		log.Print("Volume Mounting to " + connectionInfo.MountPath)
+		mount(sdfsRoot, opts, *quiet)
 	} else {
-		mount(mountPath, sdfsRoot, opts, quiet, dedupe)
+		mount(sdfsRoot, opts, *quiet)
 	}
 
 }
 
-func mount(mountPath string, sdfsRoot fs.InodeEmbedder, opts *fs.Options, quiet, dedupe *bool) {
-	server, err := fs.Mount(mountPath, sdfsRoot, opts)
+func mount(sdfsRoot fs.InodeEmbedder, opts *fs.Options, quiet bool) {
+	server, err := fs.Mount(connectionInfo.MountPath, sdfsRoot, opts)
 	if err != nil {
 		log.Errorf("Mount fail: %v\n", err)
 		AppCleanup()
 		os.Exit(5)
 	}
-	if !*quiet {
-		log.Printf("Mounted %s from %s\n", mountPath, flag.Arg(0))
+	if !quiet {
+		log.Printf("Mounted %s from %s\n", connectionInfo.MountPath, flag.Arg(0))
 	}
 	server.Wait()
 	if running {
-		log.Printf("Unmounting %s \n", mountPath)
-		con, err := spb.NewConnection(serverPath, *dedupe)
+		log.Printf("Unmounting %s \n", connectionInfo.MountPath)
+		con, err := spb.NewConnection(connectionInfo.ServerPath, connectionInfo.Dedupe, !connectionInfo.Nocompress,
+			connectionInfo.Volumeid, connectionInfo.Cachsize, connectionInfo.Cachage)
 		if err != nil {
 			log.Errorf("shutdown fail: %v\n", err)
 		}
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
 		con.ShutdownVolume(ctx)
-		log.Printf("Unmounted %s \n", mountPath)
+		log.Printf("Unmounted %s \n", connectionInfo.MountPath)
 	}
 }
 
 //AppCleanup unmounts volume before shutdown
 func AppCleanup() {
 	if running {
-		con, err := spb.NewConnection(serverPath, false)
+		con, err := spb.NewConnection(connectionInfo.ServerPath, connectionInfo.Dedupe, !connectionInfo.Nocompress,
+			connectionInfo.Volumeid, connectionInfo.Cachsize, connectionInfo.Cachage)
 		if err != nil {
 			log.Errorf("shutdown fail: %v\n", err)
 		}
@@ -324,9 +349,9 @@ func AppCleanup() {
 		defer cancel()
 		con.ShutdownVolume(ctx)
 	}
-	log.Printf("Unmounting %s \n", mountPath)
+	log.Printf("Unmounting %s \n", connectionInfo.MountPath)
 
-	err := unix.Unmount(mountPath, 0)
+	err := unix.Unmount(connectionInfo.MountPath, 0)
 	if err != nil {
 		log.Errorf("Unmount fail: %v\n", err)
 	}

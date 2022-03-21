@@ -21,6 +21,23 @@ type sdfsRoot struct {
 	rootDev   uint64
 }
 
+type ConnectionInfo struct {
+	Buffers      int
+	Threads      int
+	LogPath      string
+	Cachsize     int
+	Cachage      int
+	Volumeid     int64
+	Nocompress   bool
+	Dedupe       bool
+	Debug        bool
+	ServerPath   string
+	MountPath    string
+	User         string
+	Pwd          string
+	DisableTrust bool
+}
+
 type sdfsNode struct {
 	ffs.Inode
 }
@@ -486,12 +503,13 @@ func (n *sdfsNode) Setattr(ctx context.Context, f ffs.FileHandle, in *fuse.SetAt
 // NewsdfsRoot returns a root node for a sdfs file system whose
 // root is at the given root. This node implements all NodeXxxxer
 // operations available.
-func NewsdfsRoot(root string, mnt string, disableTrust bool, username, password string, dedupe bool) (ffs.InodeEmbedder, error) {
+func NewsdfsRoot(root string, connectionInfo ConnectionInfo) (ffs.InodeEmbedder, error) {
 	var err error
-	spb.DisableTrust = disableTrust
-	spb.Password = password
-	spb.UserName = username
-	con, err = spb.NewConnection(root, dedupe)
+	spb.DisableTrust = connectionInfo.DisableTrust
+	spb.Password = connectionInfo.Pwd
+	spb.UserName = connectionInfo.User
+	con, err = spb.NewConnection(root, connectionInfo.Dedupe, !connectionInfo.Nocompress,
+		connectionInfo.Volumeid, connectionInfo.Cachsize, connectionInfo.Cachage)
 	if err != nil {
 		return nil, err
 	}
@@ -504,7 +522,7 @@ func NewsdfsRoot(root string, mnt string, disableTrust bool, username, password 
 	n := &sdfsRoot{
 		rootPath:  "/",
 		rootDev:   uint64(fi.SerialNumber),
-		rootMount: mnt,
+		rootMount: connectionInfo.MountPath,
 	}
 	return n, nil
 }
